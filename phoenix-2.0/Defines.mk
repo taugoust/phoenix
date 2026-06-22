@@ -35,7 +35,7 @@ OS = -D_CYGWIN_
 endif
 
 ifeq ($(OSTYPE),Linux)
-OS = -D_LINUX_
+OS = -D_LINUX_ -D_GNU_SOURCE
 CC = gcc
 #DEBUG = -g
 CFLAGS = -Wall $(OS) $(DEBUG) -O3

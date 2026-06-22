@@ -32,6 +32,11 @@
 #include <sys/time.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <unistd.h>
+
+#ifdef _LINUX_
+#include <sched.h>
+#endif
 
 //#define TIMING
 
@@ -72,6 +77,24 @@ static inline char *GETENV(char *envstr)
    char *env = getenv(envstr);
    if (!env) return "0";
    else return env;
+}
+
+static inline int phoenix_get_num_cpus(void)
+{
+#ifdef _LINUX_
+   cpu_set_t cpus;
+   int i;
+   int num_cpus = 0;
+
+   if (sched_getaffinity(0, sizeof(cpus), &cpus) == 0) {
+      for (i = 0; i < CPU_SETSIZE; i++) {
+         if (CPU_ISSET(i, &cpus)) num_cpus++;
+      }
+      if (num_cpus > 0) return num_cpus;
+   }
+#endif
+
+   return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
 #define GET_TIME(start, end, duration)                                     \

@@ -33,12 +33,7 @@
 #include <assert.h>
 #include <pthread.h>
 
-#define CHECK_ERROR(a)                                       \
-   if (a)                                                    \
-   {                                                         \
-      perror("Error at line\n\t" #a "\nSystem Msg");         \
-      exit(1);                                               \
-   }
+#include "stddefines.h"
 
 void *sort_section(void *args_in) ;
 
@@ -71,7 +66,7 @@ void sort_pthreads(void *base, size_t num_elems, size_t width,
    pthread_attr_t attr;
    pthread_t * tid;
 
-   CHECK_ERROR((num_procs = sysconf(_SC_NPROCESSORS_ONLN)) <= 0);
+   CHECK_ERROR((num_procs = phoenix_get_num_cpus()) <= 0);
    printf("THe number of processors is %d\n\n", num_procs);
 
    tid = (pthread_t *)malloc(num_procs * sizeof(pthread_t)); 
@@ -102,9 +97,9 @@ void sort_pthreads(void *base, size_t num_elems, size_t width,
 	   /* Barrier, wait for all threads to finish */
 	   for (i = 0; i < num_threads; i++)
 	   {
-		  int ret_val;
-		  CHECK_ERROR(pthread_join(tid[i], (void **)(void*)&ret_val) != 0);
-		  CHECK_ERROR(ret_val != 0);
+		  void *ret_val;
+		  CHECK_ERROR(pthread_join(tid[i], &ret_val) != 0);
+		  CHECK_ERROR(ret_val != NULL);
 	   }
 
 	   num_threads = num_threads / 2;

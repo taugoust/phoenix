@@ -280,7 +280,7 @@ int main(int argc, char **argv)
    
    pthread_attr_init(&attr);
    pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
-   CHECK_ERROR((num_procs = sysconf(_SC_NPROCESSORS_ONLN)) <= 0);
+   CHECK_ERROR((num_procs = phoenix_get_num_cpus()) <= 0);
       
    CHECK_ERROR( (pid = (pthread_t *)malloc(sizeof(pthread_t) * num_procs)) == NULL);
    
@@ -315,7 +315,7 @@ int main(int argc, char **argv)
       
       assert (num_threads == num_procs);
       for (i = 0; i < num_threads; i++) {
-         pthread_join(pid[i], NULL);   
+         CHECK_ERROR(pthread_join(pid[i], NULL) != 0);
       }
       
       num_per_thread = num_means / num_procs;
@@ -338,7 +338,7 @@ int main(int argc, char **argv)
       
       assert (num_threads == num_procs);
       for (i = 0; i < num_threads; i++) {
-         pthread_join(pid[i], NULL);   
+         CHECK_ERROR(pthread_join(pid[i], NULL) != 0);
       }
       
    }

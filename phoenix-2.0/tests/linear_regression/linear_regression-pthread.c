@@ -115,7 +115,7 @@ int main(int argc, char *argv[])
    CHECK_ERROR((fdata = mmap(0, finfo.st_size + 1, 
       PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0)) == NULL);
 
-   CHECK_ERROR((num_procs = sysconf(_SC_NPROCESSORS_ONLN)) <= 0);
+   CHECK_ERROR((num_procs = phoenix_get_num_cpus()) <= 0);
    printf("The number of processors is %d\n\n", num_procs);
 
    pthread_attr_init(&attr);
@@ -148,9 +148,9 @@ int main(int argc, char *argv[])
    /* Barrier, wait for all threads to finish */
    for (i = 0; i < num_threads; i++)
    {
-	  int ret_val;
-	  CHECK_ERROR(pthread_join(tid_args[i].tid, (void **)(void*)&ret_val) != 0);
-	  CHECK_ERROR(ret_val != 0);
+	  void *ret_val;
+	  CHECK_ERROR(pthread_join(tid_args[i].tid, &ret_val) != 0);
+	  CHECK_ERROR(ret_val != NULL);
 
       SX_ll += tid_args[i].SX;
       SY_ll += tid_args[i].SY; 

@@ -121,7 +121,7 @@ void wordcount_splitter(void *data_in)
    pthread_t * tid;
    int i,num_procs;
 
-   CHECK_ERROR((num_procs = sysconf(_SC_NPROCESSORS_ONLN)) <= 0);
+   CHECK_ERROR((num_procs = phoenix_get_num_cpus()) <= 0);
    dprintf("THe number of processors is %d\n\n", num_procs);
 
    wc_data_t * data = (wc_data_t *)data_in; 
@@ -169,9 +169,9 @@ void wordcount_splitter(void *data_in)
    /* Barrier, wait for all threads to finish */
    for (i = 0; i < num_procs; i++)
    {
-      int ret_val;
-      CHECK_ERROR(pthread_join(tid[i], (void **)(void*)&ret_val) != 0);
-	  CHECK_ERROR(ret_val != 0);
+      void *ret_val;
+      CHECK_ERROR(pthread_join(tid[i], &ret_val) != 0);
+	  CHECK_ERROR(ret_val != NULL);
    }
 
 
@@ -201,9 +201,9 @@ void wordcount_splitter(void *data_in)
 	   /* Barrier, wait for all threads to finish */
 	   for (i = 0; i < num_threads; i++)
 	   {
-		  int ret_val;
-		  CHECK_ERROR(pthread_join(tid[i], (void **)(void*)&ret_val) != 0);
-		  CHECK_ERROR(ret_val != 0);
+		  void *ret_val;
+		  CHECK_ERROR(pthread_join(tid[i], &ret_val) != 0);
+		  CHECK_ERROR(ret_val != NULL);
 
 		  words[i] = mwords[i];
 		  use_len[i] = length[i];

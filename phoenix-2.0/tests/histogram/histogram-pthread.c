@@ -205,7 +205,7 @@ int main(int argc, char *argv[]) {
    pthread_attr_init(&attr);
    pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
    
-   CHECK_ERROR((num_procs = sysconf(_SC_NPROCESSORS_ONLN)) <= 0);
+   CHECK_ERROR((num_procs = phoenix_get_num_cpus()) <= 0);
    num_per_thread = num_pixels / num_procs;
    excess = num_pixels % num_procs;
    
@@ -230,7 +230,7 @@ int main(int argc, char *argv[]) {
    }
    
    for (i = 0; i < num_procs; i++) {
-      pthread_join(pid[i] , NULL);   
+      CHECK_ERROR(pthread_join(pid[i] , NULL) != 0);
    }
    
    for (i = 0; i < num_procs; i++) {
@@ -263,11 +263,6 @@ int main(int argc, char *argv[]) {
    CHECK_ERROR(close(fd) < 0);
    
    free(pid);
-   for(i = 0; i < num_procs; i++) {
-      free(arg[i].red);
-      free(arg[i].green);
-      free(arg[i].blue);
-   }
    free(arg);
    pthread_attr_destroy(&attr);
    

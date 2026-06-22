@@ -190,7 +190,7 @@ void pthread_mean() {
    int i;
    mean_arg_t *mean_args;
 
-   CHECK_ERROR((num_procs = sysconf(_SC_NPROCESSORS_ONLN)) <= 0);
+   CHECK_ERROR((num_procs = phoenix_get_num_cpus()) <= 0);
    printf("The number of processors is %d\n", num_procs);
 
    tid = (pthread_t *)MALLOC(num_procs * sizeof(pthread_t));
