@@ -15,33 +15,38 @@
         let
           lib = pkgs.lib;
 
-          phoenixData = pkgs.runCommand "phoenix-input-data" {
-            nativeBuildInputs = with pkgs; [ gnutar gzip ];
-            passthru.sources = {
-              histogram = "https://csl.stanford.edu/~christos/data/histogram.tar.gz";
-              linear_regression = "https://csl.stanford.edu/~christos/data/linear_regression.tar.gz";
-              string_match = "https://csl.stanford.edu/~christos/data/string_match.tar.gz";
-              word_count = "https://csl.stanford.edu/~christos/data/word_count.tar.gz";
-            };
-          } ''
-            mkdir -p $out
-            tar -xzf ${pkgs.fetchurl {
+          dataSources = {
+            histogram = {
               url = "https://csl.stanford.edu/~christos/data/histogram.tar.gz";
               hash = "sha256-uAqfnPUKN/ZeOUM9KjCteyDkZXbATxMVvDbWzTs4rTY=";
-            }} -C $out
-            tar -xzf ${pkgs.fetchurl {
+            };
+            linear-regression = {
               url = "https://csl.stanford.edu/~christos/data/linear_regression.tar.gz";
               hash = "sha256-TRk9eKujXSVOHZpMUnUHbV7GuikDhhX8x0H8pa5Hs3M=";
-            }} -C $out
-            tar -xzf ${pkgs.fetchurl {
+            };
+            string-match = {
               url = "https://csl.stanford.edu/~christos/data/string_match.tar.gz";
               hash = "sha256-oDM2akSUCFho46T0nab522c85wg6YI12jedr3iU5ZD8=";
-            }} -C $out
-            tar -xzf ${pkgs.fetchurl {
+            };
+            word-count = {
               url = "https://csl.stanford.edu/~christos/data/word_count.tar.gz";
               hash = "sha256-ZEfwzEc4qM/RrSoQiQrnHfFMvHCalUdUH6P9uTQrJHs=";
-            }} -C $out
-          '';
+            };
+          };
+          mkPhoenixData = name: source:
+            pkgs.runCommand "phoenix-input-data-${name}" {
+              nativeBuildInputs = with pkgs; [ gnutar gzip ];
+              passthru.source = source.url;
+            } ''
+              mkdir -p $out
+              tar -xzf ${pkgs.fetchurl source} -C $out
+            '';
+          phoenixDataPackages = lib.mapAttrs mkPhoenixData dataSources;
+          phoenixData = pkgs.symlinkJoin {
+            name = "phoenix-input-data";
+            paths = lib.attrValues phoenixDataPackages;
+            passthru.sources = lib.mapAttrs (_: source: source.url) dataSources;
+          };
 
           apps = [
             { benchmark = "histogram"; dir = "histogram"; args = [ "data/histogram_datafiles/small.bmp" ]; inputFiles = [ "data/histogram_datafiles/small.bmp" ]; }
@@ -182,9 +187,8 @@
 
               installPhase = ''
                 runHook preInstall
-                mkdir -p "$out/bin" "$out/data"
+                mkdir -p "$out/bin"
                 ${installApps}
-                cp -a ${phoenixData}/. "$out/data/"
                 cp ${manifest} "$out/manifest.json"
                 runHook postInstall
               '';
@@ -293,6 +297,10 @@
         let
           muslPackages = {
             phoenix-input-data = phoenixData;
+            phoenix-input-data-histogram = phoenixDataPackages.histogram;
+            phoenix-input-data-linear-regression = phoenixDataPackages.linear-regression;
+            phoenix-input-data-string-match = phoenixDataPackages.string-match;
+            phoenix-input-data-word-count = phoenixDataPackages.word-count;
 
             phoenix-x86_64-musl-static-seq = mkMusl "seq" "" "-O2";
             phoenix-x86_64-musl-static-pthread = mkMusl "pthread" "" "-O2";
@@ -324,6 +332,7 @@
       checks = forAllSystems (pkgs: system:
         let
           pkg = self.packages.${system}.phoenix-x86_64-musl-static-seq;
+          histogramData = self.packages.${system}.phoenix-input-data-histogram;
         in
         {
           phoenix-x86_64-musl-static-histogram-seq = pkgs.runCommand "check-phoenix-x86_64-musl-static-histogram-seq" {
@@ -344,7 +353,8 @@
             fi
 
             test -e ${pkg}/bin/histogram-seq-v2-static-musl
-            test -e ${pkg}/data/histogram_datafiles/small.bmp
+            test ! -e ${pkg}/data
+            test -e ${histogramData}/histogram_datafiles/small.bmp
             test -e ${pkg}/manifest.json
             touch $out
           '';
