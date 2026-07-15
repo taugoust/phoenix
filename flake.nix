@@ -1,5 +1,5 @@
 {
-  description = "Phoenix MapReduce benchmark binaries for native builds and x86_64 musl guest inputs";
+  description = "Phoenix MapReduce benchmark binaries for native builds and x86_64 guest inputs";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -62,7 +62,7 @@
             else if mode == "pthread" then [ "pthread" ]
             else [ "mapreduce" "seq" "pthread" ];
 
-          mkManifest = { modes, staticSuffix, optimization, targetTriple, libcName }:
+          mkManifest = { manifestApps ? apps, modes, staticSuffix, optimization, targetTriple, libcName, isStatic, nonPie }:
             let
               entries = lib.concatMap (app:
                 map (mode: {
@@ -77,9 +77,9 @@
                   optimization = optimization;
                   target_triple = targetTriple;
                   libc = libcName;
-                  static = staticSuffix == "-static-musl";
-                  non_pie = staticSuffix == "-static-musl";
-                }) modes) apps;
+                  static = isStatic;
+                  non_pie = nonPie;
+                }) modes) manifestApps;
             in pkgs.writeText "manifest.json" (builtins.toJSON {
               schema = 1;
               package_system = system;
@@ -99,16 +99,23 @@
             , buildPkgs
             , name
             , modes
+            , appsToBuild ? apps
             , staticMusl ? false
+            , staticLink ? false
+            , staticSuffix ? (if staticMusl then "-static-musl" else "")
             , optimization ? "-O2"
             , extraCFlags ? [ ]
+            , extraPostPatch ? ""
+            , hardeningDisable ? [ ]
+            , disableFixup ? (staticMusl || staticLink)
+            , nonPie ? (staticMusl || staticLink)
             , targetTriple ? stdenv.hostPlatform.config
             , libcName ? stdenv.hostPlatform.libc or "glibc"
             }:
             let
               selectedModes = modeForPackage modes;
-              staticSuffix = if staticMusl then "-static-musl" else "";
-              linkerCCFlags = lib.optionals staticMusl [ "-static" "-no-pie" ];
+              staticLinked = staticMusl || staticLink;
+              linkerCCFlags = lib.optionals staticLinked [ "-static" "-no-pie" ];
               cflags = lib.concatStringsSep " " ([
                 "-D_LINUX_"
                 "-D__x86_64__"
@@ -116,7 +123,7 @@
                 "-Wall"
                 optimization
                 "-g"
-              ] ++ lib.optionals staticMusl [
+              ] ++ lib.optionals staticLinked [
                 "-fno-PIE"
                 "-mno-avx"
                 "-mno-avx2"
@@ -127,21 +134,23 @@
               ar = "${stdenv.cc.targetPrefix}ar";
               ranlib = "${stdenv.cc.targetPrefix}ranlib";
               manifest = mkManifest {
-                inherit staticSuffix optimization targetTriple libcName;
+                inherit staticSuffix optimization targetTriple libcName nonPie;
+                isStatic = staticLinked;
+                manifestApps = appsToBuild;
                 modes = selectedModes;
               };
               makeTargets = app: lib.concatStringsSep " " (map (mode: sourceName app mode) selectedModes);
               buildApps = lib.concatMapStringsSep "\n" (app: ''
                 make -C phoenix-2.0/tests/${app.dir} ${makeTargets app} \
                   CC="${cc}" AR="${ar}" RANLIB="${ranlib}" CFLAGS="${cflags}"
-              '') apps;
+              '') appsToBuild;
               installApps = lib.concatMapStringsSep "\n" (app:
                 lib.concatMapStringsSep "\n" (mode: ''
                   install -m755 phoenix-2.0/tests/${app.dir}/${sourceName app mode} \
                     "$out/bin/${outputName staticSuffix app mode}"
                   cp -p "$out/bin/${outputName staticSuffix app mode}" \
                     "$out/bin/${aliasName staticSuffix app mode}"
-                '') selectedModes) apps;
+                '') selectedModes) appsToBuild;
             in
             stdenv.mkDerivation {
               pname = name;
@@ -151,12 +160,16 @@
               nativeBuildInputs = with buildPkgs; [ gnumake gnused coreutils ];
               dontConfigure = true;
               dontStrip = true;
-              dontPatchELF = staticMusl;
-              dontFixup = staticMusl;
+              dontPatchELF = disableFixup;
+              dontFixup = disableFixup;
+              inherit hardeningDisable;
 
               postPatch = ''
                 find phoenix-2.0 sample_apps -type f \( -name '*.c' -o -name '*.h' \) \
                   -exec sed -i 's@#include <sys/unistd.h>@#include <unistd.h>@' {} +
+                substituteInPlace phoenix-2.0/tests/string_match/string_match-pthread.c \
+                  --replace-fail '#include <crypt.h>' '/* crypt.h unused */'
+                ${extraPostPatch}
               '';
 
               buildPhase = ''
@@ -183,6 +196,7 @@
             };
 
           muslPkgs = pkgs.pkgsCross.musl64;
+          glibcX86Pkgs = pkgs.pkgsCross.gnu64;
           mkNative = modes: mkPhoenix {
             stdenv = pkgs.stdenv;
             buildPkgs = pkgs;
@@ -203,6 +217,78 @@
             targetTriple = "x86_64-linux-musl";
             libcName = "musl";
           };
+          mkDynamicMusl = modes: mkPhoenix {
+            stdenv = muslPkgs.stdenv;
+            buildPkgs = pkgs;
+            name = "phoenix-x86_64-musl-dynamic-${modes}";
+            inherit modes;
+            staticMusl = false;
+            optimization = "-O2";
+            extraCFlags = [ "-mno-avx" "-mno-avx2" "-fno-tree-vectorize" "-fno-stack-protector" "-fno-PIE" "-no-pie" ];
+            hardeningDisable = [ "all" ];
+            disableFixup = true;
+            nonPie = true;
+            targetTriple = "x86_64-linux-musl";
+            libcName = "musl";
+          };
+          mkDynamicGlibc = modes: mkPhoenix {
+            stdenv = glibcX86Pkgs.stdenv;
+            buildPkgs = pkgs;
+            name = "phoenix-x86_64-glibc-dynamic-${modes}";
+            inherit modes;
+            appsToBuild = lib.filter (app: lib.elem app.benchmark [ "histogram" "kmeans" "linear_regression" "matrix_multiply" "pca" "string_match" "word_count" ]) apps;
+            optimization = "-O2";
+            extraCFlags = [ "-mno-avx" "-mno-avx2" "-fno-tree-vectorize" "-fno-stack-protector" "-fno-PIE" "-no-pie" ]
+              ++ lib.optionals (modes != "seq") [ "-pthread" ];
+            extraPostPatch = lib.optionalString (modes == "seq") ''
+              substituteInPlace phoenix-2.0/tests/histogram/histogram-seq.c \
+                --replace-fail '   return 0;' '   exit(0);'
+              substituteInPlace phoenix-2.0/tests/kmeans/kmeans-seq.c \
+                --replace-fail '    return 0;  ' '    exit(0);'
+              substituteInPlace phoenix-2.0/tests/linear_regression/linear_regression-seq.c \
+                --replace-fail '   return 0;' '   exit(0);'
+              substituteInPlace phoenix-2.0/tests/matrix_multiply/matrix_multiply-seq.c \
+                --replace-fail '   return 0;' '   exit(0);'
+              substituteInPlace phoenix-2.0/tests/pca/pca-seq.c \
+                --replace-fail '   return 0;' '   exit(0);'
+              substituteInPlace phoenix-2.0/tests/string_match/string_match-seq.c \
+                --replace-fail '   return 0;' '   exit(0);'
+              substituteInPlace phoenix-2.0/tests/word_count/word_count-seq.c \
+                --replace-fail '   return 0;' '   exit(0);'
+            '';
+            hardeningDisable = [ "all" ];
+            disableFixup = true;
+            nonPie = true;
+            targetTriple = "x86_64-linux-gnu";
+            libcName = "glibc";
+          };
+          mkStaticGlibc = modes: mkPhoenix {
+            stdenv = glibcX86Pkgs.stdenv;
+            buildPkgs = pkgs;
+            name = "phoenix-x86_64-glibc-static-${modes}";
+            inherit modes;
+            appsToBuild = lib.filter (app: lib.elem app.benchmark [ "histogram" "kmeans" "linear_regression" "matrix_multiply" "pca" "string_match" "word_count" ]) apps;
+            staticLink = true;
+            staticSuffix = "-static-glibc";
+            optimization = "-O2";
+            extraCFlags = [ "-fno-stack-protector" "-pthread" "-L${glibcX86Pkgs.glibc.static}/lib" ];
+            extraPostPatch = ''
+              substituteInPlace phoenix-2.0/tests/string_match/string_match-pthread.c \
+                --replace-fail '    srand( (unsigned)time( NULL ) );' '    srand(1);' \
+                --replace-fail '    gettimeofday(&starttime,0);' '    memset(&starttime, 0, sizeof(starttime));' \
+                --replace-fail '    gettimeofday(&endtime,0);' '    memset(&endtime, 0, sizeof(endtime));'
+              substituteInPlace phoenix-2.0/tests/word_count/word_count-pthread.c \
+                --replace-fail '   gettimeofday(&starttime,0);' '   memset(&starttime, 0, sizeof(starttime));' \
+                --replace-fail '   gettimeofday(&endtime,0);' '   memset(&endtime, 0, sizeof(endtime));' \
+                --replace-fail '   return 0;
+}' '   fflush(stdout);
+   return 0;
+}'
+            '';
+            hardeningDisable = [ "all" ];
+            targetTriple = "x86_64-linux-gnu";
+            libcName = "glibc";
+          };
         in
         let
           muslPackages = {
@@ -211,6 +297,14 @@
             phoenix-x86_64-musl-static-seq = mkMusl "seq" "" "-O2";
             phoenix-x86_64-musl-static-pthread = mkMusl "pthread" "" "-O2";
             phoenix-x86_64-musl-static-all = mkMusl "all" "" "-O2";
+
+            phoenix-x86_64-musl-dynamic-seq = mkDynamicMusl "seq";
+            phoenix-x86_64-musl-dynamic-pthread = mkDynamicMusl "pthread";
+            phoenix-x86_64-musl-dynamic-all = mkDynamicMusl "all";
+
+            phoenix-x86_64-glibc-dynamic-seq = mkDynamicGlibc "seq";
+            phoenix-x86_64-glibc-dynamic-pthread = mkDynamicGlibc "pthread";
+            phoenix-x86_64-glibc-static-pthread = mkStaticGlibc "pthread";
 
             phoenix-x86_64-musl-static-seq-debug = mkMusl "seq" "-debug" "-O0";
             phoenix-x86_64-musl-static-all-benchmark = mkMusl "all" "-benchmark" "-O3";
