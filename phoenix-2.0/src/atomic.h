@@ -27,6 +27,7 @@
 /**
  * define __x86_64__ for x86-64
  * define CPU_V9 for sparc
+ * __aarch64__ (predefined by the compiler) for AArch64
  */
 #ifndef ATOMIC_H
 #define ATOMIC_H
@@ -188,6 +189,48 @@ static inline uintptr_t atomic_read(void* addr)
 		"ld	[%1], %0			\n"
 	: "=r" (v) : "r" (addr));
 	return v;
+}
+
+#elif defined(__aarch64__)
+
+/* AArch64: the same operations through the GCC __atomic builtins (sequentially
+ * consistent), with the x86-64 branch's return conventions. */
+static inline void flush(void* addr) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
+
+static inline uintptr_t atomic_read(void* addr)
+{
+	return __atomic_load_n((uintptr_t*)addr, __ATOMIC_SEQ_CST);
+}
+
+/* returns zero if already set, returns nonzero if not set */
+static inline int test_and_set(uintptr_t* n)
+{
+	uintptr_t	expected = 0;
+	return __atomic_compare_exchange_n(n, &expected, 1, 0,
+		__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? -1 : 0;
+}
+
+/* adds 1 to value pointed to in 'n', returns old value */
+static inline unsigned int fetch_and_inc(unsigned int* n)
+{
+	return __atomic_fetch_add(n, 1, __ATOMIC_SEQ_CST);
+}
+
+/* returns true on swap */
+static inline int cmp_and_swp(uintptr_t v, uintptr_t* cmper, uintptr_t matcher)
+{
+	return __atomic_compare_exchange_n(cmper, &matcher, v, 0,
+		__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+
+/**
+ * @n - value to store
+ * @v - location to store into
+ * @return previous value in v
+ */
+static inline uintptr_t atomic_xchg(uintptr_t n, uintptr_t* v)
+{
+	return __atomic_exchange_n(v, n, __ATOMIC_SEQ_CST);
 }
 
 #else

@@ -1,5 +1,5 @@
 {
-  description = "Phoenix MapReduce benchmark binaries for native builds and x86_64 guest inputs";
+  description = "Phoenix MapReduce benchmark binaries for native builds and x86_64/aarch64 guest inputs";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -121,19 +121,31 @@
               selectedModes = modeForPackage modes;
               staticLinked = staticMusl || staticLink;
               linkerCCFlags = lib.optionals staticLinked [ "-static" "-no-pie" ];
+              targetIsX86 = stdenv.hostPlatform.isx86_64;
+              # src/atomic.h selects its implementation from the predefined
+              # architecture macro; -D__x86_64__ is only passed (redundantly)
+              # for x86-64 targets, where it always was.
               cflags = lib.concatStringsSep " " ([
                 "-D_LINUX_"
+              ] ++ lib.optionals targetIsX86 [
                 "-D__x86_64__"
+              ] ++ [
                 "-D_GNU_SOURCE"
                 "-Wall"
                 optimization
                 "-g"
-              ] ++ lib.optionals staticLinked [
+              ] ++ lib.optionals staticLinked ([
                 "-fno-PIE"
+              ] ++ lib.optionals targetIsX86 [
                 "-mno-avx"
                 "-mno-avx2"
+              ] ++ [
                 "-fno-tree-vectorize"
-              ] ++ extraCFlags);
+              ] ++ lib.optionals (!targetIsX86) [
+                # Keep AArch64 guests from fusing multiply-adds, so they compute
+                # the same IEEE results as the FMA-free x86-64 baseline guests.
+                "-ffp-contract=off"
+              ]) ++ extraCFlags);
               ccBase = "${stdenv.cc.targetPrefix}gcc";
               cc = lib.concatStringsSep " " ([ ccBase ] ++ linkerCCFlags);
               ar = "${stdenv.cc.targetPrefix}ar";
@@ -200,6 +212,7 @@
             };
 
           muslPkgs = pkgs.pkgsCross.musl64;
+          aarch64MuslPkgs = pkgs.pkgsCross.aarch64-multiplatform-musl;
           glibcX86Pkgs = pkgs.pkgsCross.gnu64;
           mkNative = modes: mkPhoenix {
             stdenv = pkgs.stdenv;
@@ -219,6 +232,16 @@
             staticMusl = true;
             optimization = optFlag;
             targetTriple = "x86_64-linux-musl";
+            libcName = "musl";
+          };
+          mkAarch64Musl = modes: optName: optFlag: mkPhoenix {
+            stdenv = aarch64MuslPkgs.stdenv;
+            buildPkgs = pkgs;
+            name = "phoenix-aarch64-musl-static-${modes}${optName}";
+            inherit modes;
+            staticMusl = true;
+            optimization = optFlag;
+            targetTriple = "aarch64-linux-musl";
             libcName = "musl";
           };
           mkDynamicMusl = modes: mkPhoenix {
@@ -316,6 +339,10 @@
 
             phoenix-x86_64-musl-static-seq-debug = mkMusl "seq" "-debug" "-O0";
             phoenix-x86_64-musl-static-all-benchmark = mkMusl "all" "-benchmark" "-O3";
+
+            phoenix-aarch64-musl-static-seq = mkAarch64Musl "seq" "" "-O2";
+            phoenix-aarch64-musl-static-pthread = mkAarch64Musl "pthread" "" "-O2";
+            phoenix-aarch64-musl-static-all = mkAarch64Musl "all" "" "-O2";
           };
           nativePackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 {
             phoenix-seq = mkNative "seq";
@@ -332,9 +359,28 @@
       checks = forAllSystems (pkgs: system:
         let
           pkg = self.packages.${system}.phoenix-x86_64-musl-static-seq;
+          aarch64Pkg = self.packages.${system}.phoenix-aarch64-musl-static-all;
           histogramData = self.packages.${system}.phoenix-input-data-histogram;
         in
         {
+          phoenix-aarch64-musl-static-all = pkgs.runCommand "check-phoenix-aarch64-musl-static-all" {
+            nativeBuildInputs = with pkgs; [ file binutils gnugrep jq ];
+          } ''
+            set -eu
+            for binary in ${aarch64Pkg}/bin/*; do
+              file "$binary" | tee file.out
+              grep -q 'ELF 64-bit LSB executable, ARM aarch64' file.out
+              grep -q 'statically linked' file.out
+              readelf -h "$binary" | grep -q 'Type:.*EXEC'
+              if readelf -l "$binary" | grep -q INTERP; then
+                echo "unexpected INTERP program header: $binary" >&2
+                exit 1
+              fi
+            done
+            jq -e '.target_triple == "aarch64-linux-musl" and (.benchmarks | length == 21)' ${aarch64Pkg}/manifest.json
+            touch $out
+          '';
+
           phoenix-x86_64-musl-static-histogram-seq = pkgs.runCommand "check-phoenix-x86_64-musl-static-histogram-seq" {
             nativeBuildInputs = with pkgs; [ file binutils gnugrep ];
           } ''
